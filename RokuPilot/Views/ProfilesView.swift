@@ -8,7 +8,7 @@ struct ProfilesView: View {
     var body: some View {
         Form {
             Section {
-                Text("Type each app's profile names **left to right, exactly as they appear on the TV**, separated by commas. Leave apps without profiles empty.")
+                Text("List **every** profile on each app's \u{201C}Who's watching?\u{201D} screen, **in the order shown on the TV**, separated by commas, including ones you never use. Pilot counts positions, so the order matters. Leave apps without profiles empty.")
                     .font(.footnote)
                     .foregroundStyle(Theme.secondaryText)
             }
@@ -25,6 +25,7 @@ private struct ProfileRow: View {
     let app: String
     @State private var text = ""
     @State private var defaultName = ""
+    @State private var vertical = false
 
     private var names: [String] {
         text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
@@ -35,6 +36,8 @@ private struct ProfileRow: View {
             TextField("e.g. AJ, Aryan, Kids", text: $text)
                 .autocorrectionDisabled()
                 .onChange(of: text) { Settings.setProfilesText(text, for: app) }
+            Toggle("Listed top to bottom", isOn: $vertical)
+                .onChange(of: vertical) { Settings.setProfilesVertical(vertical, for: app) }
             if names.count > 1 {
                 Picker("Default", selection: $defaultName) {
                     ForEach(names, id: \.self) { Text($0).tag($0) }
@@ -45,6 +48,7 @@ private struct ProfileRow: View {
         .onAppear {
             text = Settings.profilesText(for: app)
             defaultName = Settings.defaultProfile(for: app)
+            vertical = Settings.profilesVertical(for: app)
         }
     }
 }

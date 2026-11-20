@@ -55,8 +55,8 @@ struct AssistantEngine: Sendable {
     Act, don't ask: pick the most sensible reading of the request and do it.
     - For "play <song/video/creator/topic>" use play_youtube unless another app is named.
     - To play a specific movie, show or anime in ANY streaming app (Netflix, Prime Video, Disney+, Crunchyroll,
-      Tubi, Apple TV, Crave, Max, Paramount+...), use play_title with the app name. If no app is named, use
-      Netflix. Never try to type into an app's own search box.
+      Tubi, Apple TV, Crave, Max, Paramount+...), use play_title. Pass the app if the user named one; if not,
+      leave app empty and Pilot finds where it streams. Never try to type into an app's own search box.
     - For vague requests ("any horror movie on Prime", "a good anime on Crunchyroll"), first call suggest_titles,
       pick the first suggestion, then call play_title with it. Tell the user which title you picked.
     - If play_title fails, it already falls back to opening the app or Roku search; tell the user plainly.
@@ -78,7 +78,7 @@ struct AssistantEngine: Sendable {
            ["app": ["type": "string"], "content_id": ["type": "string"], "media_type": ["type": "string"]], ["app"]),
         fn("play_title", "Open a streaming app directly on a movie/show/anime and start it. app = the streaming app name.",
            ["title": ["type": "string"], "app": ["type": "string"],
-            "profile": ["type": "string", "description": "whose profile/account to use, if the user said"]], ["title", "app"]),
+            "profile": ["type": "string", "description": "whose profile/account to use, if the user said"]], ["title"]),
         fn("pick_profile", "On a 'Who's watching?' screen, select a profile by name (uses the profile order saved in Settings).",
            ["app": ["type": "string"], "name": ["type": "string"]], ["app", "name"]),
         fn("suggest_titles", "Get real, currently available titles matching a description (genre, mood) on a streaming app.",
@@ -173,7 +173,7 @@ struct AssistantEngine: Sendable {
             try await roku.launch(app.id, params: params)
             return ["ok": true, "launched": .string(app.name)]
         case "play_title":
-            return try await playTitle(s("title"), appName: s("app").isEmpty ? "Netflix" : s("app"),
+            return try await playTitle(s("title"), appName: s("app"),
                                        profile: s("profile").isEmpty ? nil : s("profile"))
         case "pick_profile":
             let app = try await roku.findApp(s("app"))
@@ -224,17 +224,23 @@ struct AssistantEngine: Sendable {
     }
 
     private func playTitle(_ title: String, appName: String, profile: String?) async throws -> JSON {
-        let app = try await roku.findApp(appName)
-        let service = StreamingService.matching(appName: app.name) ?? StreamingService.named(appName)
+        let installed = try await roku.apps()
+        var app: RokuApp
+        var service: StreamingService?
+        var found: FoundTitle?
 
-        // Netflix: proven path.
-        if service?.name == "Netflix" {
-            guard let t = await Netflix.find(title) else {
-                try await roku.launch(app.id)
-                return ["ok": false, "error": .string("Couldn't find \(title) on Netflix. Opened Netflix instead.")]
+        if appName.isEmpty {
+            // No app named: find where it streams and use the first service installed on the TV.
+            let offers = await JustWatch.offers(for: title)
+            guard let pick = offers.first(where: { o in installed.contains { StreamingService.matching(appName: $0.name)?.name == o.service.name } }),
+                  let a = installed.first(where: { StreamingService.matching(appName: $0.name)?.name == pick.service.name }) else {
+                try await roku.search(title)
+                return ["ok": false, "error": .string("Couldn't find \(title) on any app installed on your TV, so I opened Roku search.")]
             }
-            try await roku.playNetflix(t, profile: profile)
-            return ["ok": true, "playing": .string(t.name), "app": "Netflix"]
+            app = a; service = pick.service; found = pick.title
+        } else {
+            app = try await roku.findApp(appName)
+            service = StreamingService.matching(appName: app.name) ?? StreamingService.named(appName)
         }
 
         guard let service else {
@@ -243,15 +249,16 @@ struct AssistantEngine: Sendable {
             try await roku.search(title)
             return ["ok": false, "error": .string("Pilot can't open titles directly in \(app.name) yet, so it opened Roku search for \(title).")]
         }
-        guard let found = await TitleFinder.find(title, on: service) else {
+        if found == nil { found = await TitleFinder.find(title, on: service) }
+        guard let found else {
             try await roku.launch(app.id)
-            return ["ok": false, "error": .string("Couldn't find \(title) on \(service.name). Opened \(app.name) instead.")]
+            return ["ok": false, "error": .string("Couldn't find \(title) on \(service.name). Opened \(app.name) instead. (Settings › Activity log shows the details.)")]
         }
         let playing = try await roku.playTitle(found, appID: app.id, appName: app.name, profile: profile)
         return playing
             ? ["ok": true, "playing": .string(found.name), "app": .string(app.name)]
             : ["ok": true, "opened": .string(found.name), "app": .string(app.name),
-               "note": "Opened the title page; it may need one more OK press or a profile pick to start."]
+               "note": "Opened the title; it may need one more OK press or a profile pick to start."]
     }
 
     static func describe(_ name: String, _ a: [String: JSON]) -> String {
@@ -261,7 +268,7 @@ struct AssistantEngine: Sendable {
         case "type_text": return "Typed \u{201C}\(s("text"))\u{201D}"
         case "list_apps": return "Checked installed apps"
         case "launch_app": return "Opened \(s("app"))"
-        case "play_title": return "\(s("app").isEmpty ? "Netflix" : s("app")): \(s("title"))"
+        case "play_title": return "\(s("app").isEmpty ? "Play" : s("app")): \(s("title"))"
         case "pick_profile": return "Profile: \(s("name"))"
         case "suggest_titles": return "Found \(s("description")) on \(s("app"))"
         case "roku_search": return "Searched Roku for \(s("keyword"))"

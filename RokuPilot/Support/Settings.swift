@@ -69,6 +69,16 @@ enum Settings {
         d.set(name, forKey: "defaultProfile.\(key(app))")
     }
 
+    /// Netflix and Prime Video list profiles top to bottom; most others go left to right.
+    static func profilesVertical(for app: String) -> Bool {
+        if let v = d.object(forKey: "profilesVertical.\(key(app))") as? Bool { return v }
+        return ["Netflix", "Prime Video"].contains(key(app))
+    }
+
+    static func setProfilesVertical(_ v: Bool, for app: String) {
+        d.set(v, forKey: "profilesVertical.\(key(app))")
+    }
+
     /// Profiles grouped by service, so "Prime Video" and "Amazon Prime Video" share settings.
     private static func key(_ app: String) -> String {
         StreamingService.matching(appName: app)?.name ?? app

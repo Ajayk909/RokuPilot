@@ -20,7 +20,8 @@ struct StreamingService: Sendable {
             verifyPage: true, pageURL: { "https://www.netflix.com/title/\($0)" }),
         StreamingService(
             name: "Prime Video", appMatch: ["prime video", "amazon"], site: "primevideo.com",
-            idPatterns: [#"primevideo\.com/(?:[^\s"'<>]*?/)?detail/(?:[^/\s"'<>]+/)?([0-9A-Z]{10,})"#,
+            idPatterns: [#"gti=(amzn1\.dv\.gti\.[0-9a-f-]{36})"#,
+                         #"primevideo\.com/(?:[^\s"'<>]*?/)?detail/(?:[^/\s"'<>]+/)?([0-9A-Z]{10,})"#,
                          #"amazon\.[a-z.]+/(?:gp/video/detail|dp)/([0-9A-Z]{10})"#]),
         StreamingService(
             name: "Disney+", appMatch: ["disney"], site: "disneyplus.com",
@@ -70,9 +71,13 @@ enum TitleFinder {
     private static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
     static func find(_ title: String, on service: StreamingService) async -> FoundTitle? {
+        // 1. JustWatch: one catalogue of what's on every service in Canada, with direct links.
+        if let hit = await JustWatch.find(title, on: service) { return hit }
+        // 2. Web search engines (Bing, then DuckDuckGo).
         for hit in await webSearchIDs(title, service) {
             if var t = await verify(hit.id, title, service) { t.kind = hit.kind; return t }
         }
+        // 3. Gemini with Google Search, then Gemini's own knowledge.
         for hit in await geminiIDs(title, service) {
             if var t = await verify(hit.id, title, service) { t.kind = hit.kind; return t }
         }
@@ -104,27 +109,47 @@ enum TitleFinder {
     }
 
     private static func webSearchIDs(_ title: String, _ service: StreamingService) async -> [(id: String, kind: FoundTitle.Kind)] {
-        var comps = URLComponents(string: "https://html.duckduckgo.com/html/")!
-        comps.queryItems = [URLQueryItem(name: "q", value: "\(title) site:\(service.site)")]
-        var req = URLRequest(url: comps.url!)
-        req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        req.timeoutInterval = 10
-        guard let (data, _) = try? await URLSession.shared.data(for: req) else {
-            await ActivityLog.add("Web search failed for \(title) on \(service.name)")
-            return []
+        let q = "\(title) site:\(service.site)"
+        let engines: [(String, URL?)] = [
+            ("Bing", URL(string: "https://www.bing.com/search?q=" + (q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""))),
+            ("DuckDuckGo", URL(string: "https://html.duckduckgo.com/html/?q=" + (q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""))),
+        ]
+        for (engine, url) in engines {
+            guard let url else { continue }
+            var req = URLRequest(url: url)
+            req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            req.setValue("en-CA,en;q=0.9", forHTTPHeaderField: "Accept-Language")
+            req.timeoutInterval = 10
+            guard let (data, resp) = try? await URLSession.shared.data(for: req) else {
+                await ActivityLog.add("\(engine): request failed")
+                continue
+            }
+            var html = String(decoding: data, as: UTF8.self)
+            html = html.removingPercentEncoding ?? html
+            // Bing shows links as "https://www.netflix.com › title › 70254350".
+            html = html.replacingOccurrences(of: " › ", with: "/").replacingOccurrences(of: "&#8250;", with: "/")
+            let found = Array(ids(in: html, service).prefix(4))
+            let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            await ActivityLog.add("\(engine) \(service.name) \"\(title)\" [\(code)]: \(found.map { "\($0.id) (\($0.kind.rawValue))" }.joined(separator: ", ").ifEmpty("no results"))")
+            if !found.isEmpty { return found }
         }
-        var html = String(decoding: data, as: UTF8.self)
-        html = html.removingPercentEncoding ?? html
-        let found = Array(ids(in: html, service).prefix(4))
-        await ActivityLog.add("Web search \(service.name) \"\(title)\": \(found.map { "\($0.id) (\($0.kind.rawValue))" }.joined(separator: ", ").ifEmpty("no results"))")
-        return found
+        return []
     }
 
     private static func geminiIDs(_ title: String, _ service: StreamingService) async -> [(id: String, kind: FoundTitle.Kind)] {
-        let prompt = "Find the official \(service.name) web page URL (on \(service.site)) for the title \"\(title)\". Reply with only the URL."
-        guard let text = try? await GeminiClient.current.groundedText(prompt) else { return [] }
-        let found = Array(ids(in: text, service).prefix(4))
-        await ActivityLog.add("Gemini lookup \(service.name) \"\(title)\": \(found.map(\.id).joined(separator: ", ").ifEmpty("nothing"))")
+        let prompt = "What is the official \(service.name) web page URL (on \(service.site)) for \"\(title)\"? Reply with only the full URL."
+        var found: [(id: String, kind: FoundTitle.Kind)] = []
+        do {
+            let text = try await GeminiClient.current.groundedText(prompt)
+            found = Array(ids(in: text, service).prefix(4))
+            await ActivityLog.add("Gemini search \(service.name) \"\(title)\": \(found.map(\.id).joined(separator: ", ").ifEmpty("nothing"))")
+        } catch {
+            await ActivityLog.add("Gemini search failed: \(error.localizedDescription)")
+        }
+        if found.isEmpty, let text = try? await GeminiClient.current.plainText(prompt) {
+            found = Array(ids(in: text, service).prefix(4))
+            await ActivityLog.add("Gemini memory \(service.name) \"\(title)\": \(found.map(\.id).joined(separator: ", ").ifEmpty("nothing"))")
+        }
         return found
     }
 
@@ -220,9 +245,10 @@ extension RokuClient {
         let index = names.firstIndex { $0.lowercased() == wanted }
             ?? names.firstIndex { $0.lowercased().contains(wanted) || wanted.contains($0.lowercased()) }
             ?? 0
-        await ActivityLog.add("Picking profile \(names[index]) (#\(index + 1)) in \(appName)")
-        try await press(Array(repeating: "Left", count: names.count), delay: 0.25)
-        if index > 0 { try await press(Array(repeating: "Right", count: index), delay: 0.35) }
+        let vertical = Settings.profilesVertical(for: appName)
+        await ActivityLog.add("Picking profile \(names[index]) (#\(index + 1), \(vertical ? "top to bottom" : "left to right")) in \(appName)")
+        try await press(Array(repeating: vertical ? "Up" : "Left", count: names.count), delay: 0.25)
+        if index > 0 { try await press(Array(repeating: vertical ? "Down" : "Right", count: index), delay: 0.35) }
         try await press("Select")
         return true
     }

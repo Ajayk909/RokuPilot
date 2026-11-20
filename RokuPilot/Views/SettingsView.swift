@@ -7,7 +7,6 @@ struct SettingsView: View {
     @State private var selectedModel = Settings.model
     @State private var ytLoad = Settings.youTubeLoadSeconds
     @State private var haptics = Settings.haptics
-    @State private var nfLoad = Settings.netflixLoadSeconds
     @State private var appLoad = Settings.appLoadSeconds
     @State private var nfProfile = Settings.netflixAutoProfile
     @State private var autoPlay = Settings.autoPressPlay
@@ -94,16 +93,7 @@ struct SettingsView: View {
                     }
                     VStack(alignment: .leading) {
                         HStack {
-                            Text("Netflix load time")
-                            Spacer()
-                            Text("\(Int(nfLoad)) s").foregroundStyle(Theme.secondaryText).monospacedDigit()
-                        }
-                        Slider(value: $nfLoad, in: 3...15, step: 1)
-                            .onChange(of: nfLoad) { Settings.netflixLoadSeconds = nfLoad }
-                    }
-                    VStack(alignment: .leading) {
-                        HStack {
-                            Text("Other apps load time")
+                            Text("Streaming app load time")
                             Spacer()
                             Text("\(Int(appLoad)) s").foregroundStyle(Theme.secondaryText).monospacedDigit()
                         }

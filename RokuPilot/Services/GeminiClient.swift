@@ -46,6 +46,12 @@ struct GeminiClient: Sendable {
         return parts.compactMap { $0["text"]?.stringValue }.joined(separator: "\n")
     }
 
+    func plainText(_ prompt: String) async throws -> String {
+        let r = try await send(["contents": [["role": "user", "parts": [["text": .string(prompt)]]]]])
+        let parts = r["candidates"]?.arrayValue?.first?["content"]?["parts"]?.arrayValue ?? []
+        return parts.compactMap { $0["text"]?.stringValue }.joined(separator: "\n")
+    }
+
     private func send(_ body: JSON) async throws -> JSON {
         guard !apiKey.isEmpty else { throw GeminiError.noKey }
         let payload = try JSONEncoder().encode(body)
