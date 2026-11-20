@@ -1,0 +1,112 @@
+name: Build Pilot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      APP_NAME: RokuPilot
+      APPETIZE_API_TOKEN: ${{ secrets.APPETIZE_API_TOKEN }}
+      APPETIZE_PUBLIC_KEY: ${{ secrets.APPETIZE_PUBLIC_KEY }}
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          xcodegen generate
+          grep -E "objectVersion|compatibilityVersion|preferredProjectObjectVersion" "$APP_NAME.xcodeproj/project.pbxproj"
+
+      - name: Package Xcode project for submission
+        run: |
+          mkdir -p submission/$APP_NAME
+          cp -R "$APP_NAME" "$APP_NAME.xcodeproj" submission/$APP_NAME/
+          cd submission
+          zip -r -y -X "$GITHUB_WORKSPACE/$APP_NAME-XcodeProject.zip" "$APP_NAME" -x "*.DS_Store"
+
+      - name: Save Xcode project
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcode-project-for-submission
+          path: ${{ env.APP_NAME }}-XcodeProject.zip
+
+      - name: Build for iPhone (unsigned)
+        run: |
+          xcodebuild \
+            -project "$APP_NAME.xcodeproj" \
+            -scheme "$APP_NAME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-device \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+          mkdir -p Payload
+          cp -R "build-device/Build/Products/Release-iphoneos/$APP_NAME.app" Payload/
+          zip -r -y "$APP_NAME.ipa" Payload
+
+      - name: Save iPhone build
+        uses: actions/upload-artifact@v4
+        with:
+          name: iphone-ipa-for-sideloadly
+          path: ${{ env.APP_NAME }}.ipa
+
+      - name: Build for iOS Simulator
+        run: |
+          xcodebuild \
+            -project "$APP_NAME.xcodeproj" \
+            -scheme "$APP_NAME" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Zip the .app
+        run: |
+          cd build/Build/Products/Debug-iphonesimulator
+          zip -r "$GITHUB_WORKSPACE/app.zip" "$APP_NAME.app"
+
+      - name: Save build as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-app
+          path: app.zip
+
+      - name: Upload to Appetize
+        if: env.APPETIZE_API_TOKEN != ''
+        run: |
+          if [ -n "$APPETIZE_PUBLIC_KEY" ]; then
+            URL="https://api.appetize.io/v1/apps/$APPETIZE_PUBLIC_KEY"
+          else
+            URL="https://api.appetize.io/v1/apps"
+          fi
+
+          RESPONSE=$(curl -sS --fail-with-body -X POST "$URL" \
+            -H "X-API-KEY: $APPETIZE_API_TOKEN" \
+            -F "file=@app.zip" \
+            -F "platform=ios") || { echo "Appetize upload failed:"; echo "$RESPONSE" | jq -r '.message // .error // "unknown error"'; exit 1; }
+
+          KEY=$(echo "$RESPONSE" | jq -r '.publicKey')
+          LINK="https://appetize.io/app/$KEY"
+          echo "Run it here: $LINK"
+          {
+            echo "## ▶️ Run the app in your browser"
+            echo "$LINK"
+            if [ -z "$APPETIZE_PUBLIC_KEY" ]; then
+              echo ""
+              echo "First upload done. Save this as the repo secret **APPETIZE_PUBLIC_KEY** so future builds update the same link: \`$KEY\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

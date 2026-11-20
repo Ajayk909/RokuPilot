@@ -1,0 +1,6 @@
+build/
+*.xcodeproj
+RokuPilot/Info.plist
+.DS_Store
+Payload/
+*.ipa

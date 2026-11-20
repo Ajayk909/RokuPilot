@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<component name="BeamScene" extends="Scene">
+  <interface>
+    <field id="request" type="assocarray" onChange="onRequest" />
+  </interface>
+
+  <script type="text/brightscript" uri="pkg:/components/BeamScene.brs" />
+
+  <children>
+    <Rectangle id="bg" width="1920" height="1080" color="0x0B0B12FF" />
+    <Label id="title" translation="[0,430]" width="1920" horizAlign="center"
+           font="font:LargeBoldSystemFont" color="0xFFFFFFFF" text="Beam" />
+    <Label id="hint" translation="[0,520]" width="1920" horizAlign="center"
+           font="font:MediumSystemFont" color="0x8B8BA3FF"
+           text="Send a link from your phone to play it here" />
+    <Video id="video" width="1920" height="1080" visible="false" />
+  </children>
+</component>
