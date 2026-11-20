@@ -10,7 +10,7 @@ struct AssistantView: View {
         ("music.note", "Play lo-fi beats"),
         ("tv", "What's on right now?"),
         ("moon.zzz.fill", "Turn the TV off in 30 minutes"),
-        ("speaker.wave.3.fill", "Turn it up a bit"),
+        ("power", "Turn the TV off"),
         ("play.rectangle.fill", "Open Netflix"),
         ("magnifyingglass", "Search for Breaking Bad"),
     ]

@@ -150,7 +150,31 @@ struct RokuClient: Sendable {
         return words.filter { $0.count > 2 && n.contains($0) }.count
     }
 
+    // MARK: - Power
+
+    /// True when the screen is on. Roku TVs report "PowerOn" vs "DisplayOff"/"Ready"/"Headless" in standby.
+    func isOn() async -> Bool {
+        guard let d = try? await get("/query/device-info") else { return true }
+        let mode = XML.tag("power-mode", in: d) ?? "PowerOn"
+        return mode == "PowerOn"
+    }
+
+    func powerOn() async throws {
+        if await isOn() { return }
+        try await post("/keypress/PowerOn")
+        for _ in 0..<10 {  // wait for the TV to wake (up to ~5 s)
+            try? await Task.sleep(for: .milliseconds(500))
+            if await isOn() { break }
+        }
+        try? await Task.sleep(for: .seconds(1.5))
+    }
+
+    func powerOff() async throws {
+        try await post("/keypress/PowerOff")
+    }
+
     func launch(_ appID: String, params: [String: String] = [:]) async throws {
+        try await powerOn()  // opening an app wakes the TV first
         var path = "/launch/\(appID)"
         if !params.isEmpty { path += "?" + Self.query(params) }
         try await post(path)

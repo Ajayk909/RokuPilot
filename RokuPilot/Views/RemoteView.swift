@@ -18,7 +18,8 @@ struct RemoteView: View {
                         Spacer()
                         RoundKey(icon: "house.fill", label: "Home") { model.press("Home") }
                         Spacer()
-                        RoundKey(icon: "power", label: "Power", tint: .red) { model.press("Power") }
+                        RoundKey(icon: "power", label: model.status.isOn ? "Turn off" : "Turn on",
+                                 tint: model.status.isOn ? .red : Theme.green) { model.togglePower() }
                     }
                     .padding(.horizontal, 8)
 

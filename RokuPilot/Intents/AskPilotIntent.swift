@@ -60,6 +60,24 @@ struct PressTVButtonIntent: AppIntent {
     }
 }
 
+struct TurnTVOnIntent: AppIntent {
+    static var title: LocalizedStringResource = "Turn TV On"
+    static var openAppWhenRun = false
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        try await RokuClient.current.powerOn()
+        return .result(dialog: "TV is on.")
+    }
+}
+
+struct TurnTVOffIntent: AppIntent {
+    static var title: LocalizedStringResource = "Turn TV Off"
+    static var openAppWhenRun = false
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        try await RokuClient.current.powerOff()
+        return .result(dialog: "TV is off.")
+    }
+}
+
 struct PilotShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -67,6 +85,18 @@ struct PilotShortcuts: AppShortcutsProvider {
             phrases: ["Ask \(.applicationName)", "Tell \(.applicationName)", "\(.applicationName) TV"],
             shortTitle: "Ask Pilot",
             systemImageName: "sparkles.tv"
+        )
+        AppShortcut(
+            intent: TurnTVOnIntent(),
+            phrases: ["Turn on the TV with \(.applicationName)", "\(.applicationName) TV on"],
+            shortTitle: "TV On",
+            systemImageName: "power"
+        )
+        AppShortcut(
+            intent: TurnTVOffIntent(),
+            phrases: ["Turn off the TV with \(.applicationName)", "\(.applicationName) TV off"],
+            shortTitle: "TV Off",
+            systemImageName: "power.dotted"
         )
         AppShortcut(
             intent: PressTVButtonIntent(),

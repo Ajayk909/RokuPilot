@@ -64,6 +64,7 @@ struct AssistantEngine: Sendable {
       or call pick_profile when they only want to switch profile.
     - Apps take 3-6 seconds to load: call wait before pressing keys inside an app you just opened.
     - "Louder"/"quieter" = 3 VolumeUp/VolumeDown presses unless a number is given.
+    - "Turn the TV on/off", "switch it off", "wake the TV" = tv_power. Opening apps turns the TV on automatically.
     - "Turn it off in N minutes" = set_sleep_timer. "What's on?" = status.
     Reply in one or two short, friendly sentences describing what you did. No markdown.
     """
@@ -89,6 +90,8 @@ struct AssistantEngine: Sendable {
            ["query": ["type": "string"]], ["query"]),
         fn("send_to_tv", "Play a link on the TV. YouTube links open in YouTube; direct .mp4/.m3u8 links play in the Beam app.",
            ["url": ["type": "string"], "title": ["type": "string"]], ["url"]),
+        fn("tv_power", "Turn the TV on or off.",
+           ["state": ["type": "string", "enum": ["on", "off"]]], ["state"]),
         fn("status", "Get what's on the TV now: app, playback state and position, power state, sleep timer."),
         fn("set_sleep_timer", "Turn the TV off after N minutes (works while the Pilot app stays open).",
            ["minutes": ["type": "number"]], ["minutes"]),
@@ -197,6 +200,15 @@ struct AssistantEngine: Sendable {
         case "send_to_tv":
             let how = try await roku.beam(s("url"), title: s("title"))
             return ["ok": true, "opened_in": .string(how)]
+        case "tv_power":
+            if s("state").lowercased() == "off" {
+                try await roku.powerOff()
+                return ["ok": true, "tv": "off"]
+            }
+            try await roku.powerOn()
+            let on = await roku.isOn()
+            return on ? ["ok": true, "tv": "on"]
+                      : ["ok": false, "error": "The TV didn't wake up. On the TV turn on Settings › System › Power › Fast TV start, so it can be turned on from your phone."]
         case "status":
             let st = try await roku.status()
             let timer = await SleepTimer.shared.minutesLeft
@@ -274,6 +286,7 @@ struct AssistantEngine: Sendable {
         case "roku_search": return "Searched Roku for \(s("keyword"))"
         case "play_youtube": return "YouTube: \(s("query"))"
         case "send_to_tv": return "Sent link to TV"
+        case "tv_power": return "Turned TV \(s("state"))"
         case "status": return "Checked what's playing"
         case "set_sleep_timer": return "Sleep timer \(s("minutes")) min"
         case "cancel_sleep_timer": return "Cancelled sleep timer"

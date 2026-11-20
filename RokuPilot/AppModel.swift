@@ -73,6 +73,17 @@ final class AppModel {
         }
     }
 
+    func togglePower() {
+        Haptics.tap()
+        Task {
+            do {
+                if status.isOn { try await roku.powerOff() } else { try await roku.powerOn() }
+            } catch { flash(error) }
+            try? await Task.sleep(for: .seconds(1))
+            await refreshStatus()
+        }
+    }
+
     func type(_ text: String) {
         guard !text.isEmpty else { return }
         Task { do { try await roku.type(text) } catch { flash(error) } }
