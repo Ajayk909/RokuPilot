@@ -29,12 +29,25 @@ struct GeminiClient: Sendable {
     }
 
     func generate(system: String, contents: [JSON], tools: [JSON]) async throws -> JSON {
-        guard !apiKey.isEmpty else { throw GeminiError.noKey }
-        let body: JSON = [
+        try await send([
             "systemInstruction": ["parts": [["text": .string(system)]]],
             "contents": .array(contents),
             "tools": [["functionDeclarations": .array(tools)]],
-        ]
+        ])
+    }
+
+    /// One-shot question answered with Google Search grounding (used to look things up, e.g. Netflix IDs).
+    func groundedText(_ prompt: String) async throws -> String {
+        let r = try await send([
+            "contents": [["role": "user", "parts": [["text": .string(prompt)]]]],
+            "tools": [["google_search": [:]]],
+        ])
+        let parts = r["candidates"]?.arrayValue?.first?["content"]?["parts"]?.arrayValue ?? []
+        return parts.compactMap { $0["text"]?.stringValue }.joined(separator: "\n")
+    }
+
+    private func send(_ body: JSON) async throws -> JSON {
+        guard !apiKey.isEmpty else { throw GeminiError.noKey }
         let payload = try JSONEncoder().encode(body)
         var lastError: Error = GeminiError.busy
 

@@ -7,6 +7,8 @@ struct SettingsView: View {
     @State private var selectedModel = Settings.model
     @State private var ytLoad = Settings.youTubeLoadSeconds
     @State private var haptics = Settings.haptics
+    @State private var nfLoad = Settings.netflixLoadSeconds
+    @State private var nfProfile = Settings.netflixAutoProfile
     @State private var testResult: (ok: Bool, text: String)?
     @State private var testing = false
 
@@ -88,12 +90,23 @@ struct SettingsView: View {
                         Slider(value: $ytLoad, in: 3...15, step: 1)
                             .onChange(of: ytLoad) { Settings.youTubeLoadSeconds = ytLoad }
                     }
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Text("Netflix load time")
+                            Spacer()
+                            Text("\(Int(nfLoad)) s").foregroundStyle(Theme.secondaryText).monospacedDigit()
+                        }
+                        Slider(value: $nfLoad, in: 3...15, step: 1)
+                            .onChange(of: nfLoad) { Settings.netflixLoadSeconds = nfLoad }
+                    }
+                    Toggle("Pick Netflix profile automatically", isOn: $nfProfile)
+                        .onChange(of: nfProfile) { Settings.netflixAutoProfile = nfProfile }
                     Toggle("Haptic feedback", isOn: $haptics)
                         .onChange(of: haptics) { Settings.haptics = haptics }
                 } header: {
                     Text("Playback")
                 } footer: {
-                    Text("How long Pilot waits for YouTube to open before starting a video. Raise it if videos start on a black screen.")
+                    Text("Load times are how long Pilot waits for an app to open. Raise them if videos start on a black screen. Auto profile presses OK once if Netflix asks who's watching.")
                 }
 
                 Section {

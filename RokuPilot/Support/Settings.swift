@@ -25,6 +25,17 @@ enum Settings {
         set { d.set(newValue, forKey: "ytLoad") }
     }
 
+    static var netflixLoadSeconds: Double {
+        get { d.object(forKey: "nfLoad") as? Double ?? 7 }
+        set { d.set(newValue, forKey: "nfLoad") }
+    }
+
+    /// Press OK once if Netflix opens on the "Who's watching?" screen.
+    static var netflixAutoProfile: Bool {
+        get { d.object(forKey: "nfProfile") as? Bool ?? true }
+        set { d.set(newValue, forKey: "nfProfile") }
+    }
+
     static var haptics: Bool {
         get { d.object(forKey: "haptics") as? Bool ?? true }
         set { d.set(newValue, forKey: "haptics") }
