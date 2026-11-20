@@ -217,7 +217,7 @@ struct AssistantEngine: Sendable {
         if service?.name == "Netflix" {
             guard let t = await Netflix.find(title) else {
                 try await roku.launch(app.id)
-                return ["ok": false, "error": "Couldn't find \(title) on Netflix. Opened Netflix instead."]
+                return ["ok": false, "error": .string("Couldn't find \(title) on Netflix. Opened Netflix instead.")]
             }
             try await roku.playNetflix(t)
             return ["ok": true, "playing": .string(t.name), "app": "Netflix"]
@@ -227,11 +227,11 @@ struct AssistantEngine: Sendable {
             try await roku.launch(app.id)
             try? await Task.sleep(for: .seconds(4))
             try await roku.search(title)
-            return ["ok": false, "error": "Pilot can't open titles directly in \(app.name) yet, so it opened Roku search for \(title)."]
+            return ["ok": false, "error": .string("Pilot can't open titles directly in \(app.name) yet, so it opened Roku search for \(title).")]
         }
         guard let found = await TitleFinder.find(title, on: service) else {
             try await roku.launch(app.id)
-            return ["ok": false, "error": "Couldn't find \(title) on \(service.name). Opened \(app.name) instead."]
+            return ["ok": false, "error": .string("Couldn't find \(title) on \(service.name). Opened \(app.name) instead.")]
         }
         let playing = try await roku.playTitle(found, appID: app.id, isSeries: isSeries)
         return playing

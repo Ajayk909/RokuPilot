@@ -11,7 +11,7 @@ struct StreamingService: Sendable {
     let idPatterns: [String]
     /// If true, the public title page is fetched to confirm it's the right title.
     var verifyPage = false
-    var pageURL: ((String) -> String)? = nil
+    var pageURL: (@Sendable (String) -> String)? = nil
 
     static let all: [StreamingService] = [
         StreamingService(
