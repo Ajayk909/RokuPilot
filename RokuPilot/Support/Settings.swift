@@ -25,6 +25,11 @@ enum Settings {
         set { d.set(newValue, forKey: "ytLoad") }
     }
 
+    static var appLoadSeconds: Double {
+        get { d.object(forKey: "appLoad") as? Double ?? 8 }
+        set { d.set(newValue, forKey: "appLoad") }
+    }
+
     static var netflixLoadSeconds: Double {
         get { d.object(forKey: "nfLoad") as? Double ?? 7 }
         set { d.set(newValue, forKey: "nfLoad") }

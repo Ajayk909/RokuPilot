@@ -8,6 +8,7 @@ struct SettingsView: View {
     @State private var ytLoad = Settings.youTubeLoadSeconds
     @State private var haptics = Settings.haptics
     @State private var nfLoad = Settings.netflixLoadSeconds
+    @State private var appLoad = Settings.appLoadSeconds
     @State private var nfProfile = Settings.netflixAutoProfile
     @State private var testResult: (ok: Bool, text: String)?
     @State private var testing = false
@@ -99,14 +100,23 @@ struct SettingsView: View {
                         Slider(value: $nfLoad, in: 3...15, step: 1)
                             .onChange(of: nfLoad) { Settings.netflixLoadSeconds = nfLoad }
                     }
-                    Toggle("Pick Netflix profile automatically", isOn: $nfProfile)
+                    VStack(alignment: .leading) {
+                        HStack {
+                            Text("Other apps load time")
+                            Spacer()
+                            Text("\(Int(appLoad)) s").foregroundStyle(Theme.secondaryText).monospacedDigit()
+                        }
+                        Slider(value: $appLoad, in: 4...20, step: 1)
+                            .onChange(of: appLoad) { Settings.appLoadSeconds = appLoad }
+                    }
+                    Toggle("Get past profile screens automatically", isOn: $nfProfile)
                         .onChange(of: nfProfile) { Settings.netflixAutoProfile = nfProfile }
                     Toggle("Haptic feedback", isOn: $haptics)
                         .onChange(of: haptics) { Settings.haptics = haptics }
                 } header: {
                     Text("Playback")
                 } footer: {
-                    Text("Load times are how long Pilot waits for an app to open. Raise them if videos start on a black screen. Auto profile presses OK once if Netflix asks who's watching.")
+                    Text("Load times are how long Pilot waits for an app to open. Raise them if videos start on a black screen. Profile screens: Pilot presses OK once if an app asks who's watching.")
                 }
 
                 Section {

@@ -54,10 +54,12 @@ struct AssistantEngine: Sendable {
     You are Pilot, the assistant for the user's Roku TV. You control the TV's normal Roku UI through tools.
     Act, don't ask: pick the most sensible reading of the request and do it.
     - For "play <song/video/creator/topic>" use play_youtube unless another app is named.
-    - To play a movie or show on Netflix (or when the user just says "play <movie/show>"), use play_on_netflix.
-      Never try to type into Netflix's search yourself.
-    - If play_on_netflix can't find it, or another app is named, open that app and use roku_search as a fallback,
-      and tell the user plainly what you did.
+    - To play a specific movie, show or anime in ANY streaming app (Netflix, Prime Video, Disney+, Crunchyroll,
+      Tubi, Apple TV, Crave, Max, Paramount+...), use play_title with the app name. If no app is named, use
+      Netflix. Never try to type into an app's own search box.
+    - For vague requests ("any horror movie on Prime", "a good anime on Crunchyroll"), first call suggest_titles,
+      pick the first suggestion, then call play_title with it. Tell the user which title you picked.
+    - If play_title fails, it already falls back to opening the app or Roku search; tell the user plainly.
     - Apps take 3-6 seconds to load: call wait before pressing keys inside an app you just opened.
     - "Louder"/"quieter" = 3 VolumeUp/VolumeDown presses unless a number is given.
     - "Turn it off in N minutes" = set_sleep_timer. "What's on?" = status.
@@ -72,8 +74,11 @@ struct AssistantEngine: Sendable {
         fn("list_apps", "List the apps installed on the TV."),
         fn("launch_app", "Open an installed app by name (fuzzy match). Optionally deep-link with content_id.",
            ["app": ["type": "string"], "content_id": ["type": "string"], "media_type": ["type": "string"]], ["app"]),
-        fn("play_on_netflix", "Open Netflix directly on a movie or show and start playing it. Pass the title only.",
-           ["title": ["type": "string"]], ["title"]),
+        fn("play_title", "Open a streaming app directly on a movie/show/anime and start it. app = the streaming app name.",
+           ["title": ["type": "string"], "app": ["type": "string"],
+            "is_series": ["type": "boolean", "description": "true for TV shows and anime series"]], ["title", "app"]),
+        fn("suggest_titles", "Get real, currently available titles matching a description (genre, mood) on a streaming app.",
+           ["description": ["type": "string"], "app": ["type": "string"]], ["description", "app"]),
         fn("roku_search", "Open Roku's global search for a movie, show or actor.",
            ["keyword": ["type": "string"]], ["keyword"]),
         fn("play_youtube", "Find the best YouTube video for a search (matches title and channel) and play it.",
@@ -159,12 +164,13 @@ struct AssistantEngine: Sendable {
             }
             try await roku.launch(app.id, params: params)
             return ["ok": true, "launched": .string(app.name)]
-        case "play_on_netflix":
-            guard let t = await Netflix.find(s("title")) else {
-                return ["ok": false, "error": "Couldn't find that title on Netflix"]
-            }
-            try await roku.playNetflix(t)
-            return ["ok": true, "playing": .string(t.name), "note": "Opened Netflix directly on the title"]
+        case "play_title":
+            return try await playTitle(s("title"), appName: s("app").isEmpty ? "Netflix" : s("app"),
+                                       isSeries: a["is_series"].map { $0 == .bool(true) } ?? false)
+        case "suggest_titles":
+            let list = await TitleFinder.suggestions(s("description"), on: s("app").isEmpty ? "Netflix" : s("app"))
+            return list.isEmpty ? ["ok": false, "error": "Couldn't find suggestions"]
+                                : ["ok": true, "titles": .array(list.map { .string($0) })]
         case "roku_search":
             try await roku.search(s("keyword"))
             return ["ok": true]
@@ -203,6 +209,37 @@ struct AssistantEngine: Sendable {
         }
     }
 
+    private func playTitle(_ title: String, appName: String, isSeries: Bool) async throws -> JSON {
+        let app = try await roku.findApp(appName)
+        let service = StreamingService.matching(appName: app.name) ?? StreamingService.named(appName)
+
+        // Netflix: proven path.
+        if service?.name == "Netflix" {
+            guard let t = await Netflix.find(title) else {
+                try await roku.launch(app.id)
+                return ["ok": false, "error": "Couldn't find \(title) on Netflix. Opened Netflix instead."]
+            }
+            try await roku.playNetflix(t)
+            return ["ok": true, "playing": .string(t.name), "app": "Netflix"]
+        }
+
+        guard let service else {
+            try await roku.launch(app.id)
+            try? await Task.sleep(for: .seconds(4))
+            try await roku.search(title)
+            return ["ok": false, "error": "Pilot can't open titles directly in \(app.name) yet, so it opened Roku search for \(title)."]
+        }
+        guard let found = await TitleFinder.find(title, on: service) else {
+            try await roku.launch(app.id)
+            return ["ok": false, "error": "Couldn't find \(title) on \(service.name). Opened \(app.name) instead."]
+        }
+        let playing = try await roku.playTitle(found, appID: app.id, isSeries: isSeries)
+        return playing
+            ? ["ok": true, "playing": .string(found.name), "app": .string(app.name)]
+            : ["ok": true, "opened": .string(found.name), "app": .string(app.name),
+               "note": "Opened the title page; it may need one more OK press or a profile pick to start."]
+    }
+
     static func describe(_ name: String, _ a: [String: JSON]) -> String {
         func s(_ k: String) -> String { a[k]?.stringValue ?? "" }
         switch name {
@@ -210,7 +247,8 @@ struct AssistantEngine: Sendable {
         case "type_text": return "Typed \u{201C}\(s("text"))\u{201D}"
         case "list_apps": return "Checked installed apps"
         case "launch_app": return "Opened \(s("app"))"
-        case "play_on_netflix": return "Netflix: \(s("title"))"
+        case "play_title": return "\(s("app").isEmpty ? "Netflix" : s("app")): \(s("title"))"
+        case "suggest_titles": return "Found \(s("description")) on \(s("app"))"
         case "roku_search": return "Searched Roku for \(s("keyword"))"
         case "play_youtube": return "YouTube: \(s("query"))"
         case "send_to_tv": return "Sent link to TV"
