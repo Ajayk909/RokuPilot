@@ -59,8 +59,10 @@ struct StreamingService: Sendable {
 }
 
 struct FoundTitle: Sendable {
+    enum Kind: String, Sendable { case movie, series, episode, unknown }
     let id: String
     let name: String
+    var kind: Kind = .unknown
 }
 
 /// Finds title IDs (web search first, Gemini search as a backup) and verifies them where possible.
@@ -68,42 +70,62 @@ enum TitleFinder {
     private static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
     static func find(_ title: String, on service: StreamingService) async -> FoundTitle? {
-        for id in await webSearchIDs(title, service) {
-            if let t = await verify(id, title, service) { return t }
+        for hit in await webSearchIDs(title, service) {
+            if var t = await verify(hit.id, title, service) { t.kind = hit.kind; return t }
         }
-        for id in await geminiIDs(title, service) {
-            if let t = await verify(id, title, service) { return t }
+        for hit in await geminiIDs(title, service) {
+            if var t = await verify(hit.id, title, service) { t.kind = hit.kind; return t }
         }
         return nil
     }
 
-    static func ids(in text: String, _ service: StreamingService) -> [String] {
+    static func ids(in text: String, _ service: StreamingService) -> [(id: String, kind: FoundTitle.Kind)] {
         var seen = Set<String>()
-        var out: [String] = []
+        var out: [(String, FoundTitle.Kind)] = []
+        let ns = text as NSString
         for p in service.idPatterns {
-            for m in XML.matches(p, in: text) {
-                if let id = m.first, !id.isEmpty, seen.insert(id).inserted { out.append(id) }
+            guard let re = try? NSRegularExpression(pattern: p) else { continue }
+            for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) where m.numberOfRanges > 1 {
+                let id = ns.substring(with: m.range(at: 1))
+                guard !id.isEmpty, seen.insert(id).inserted else { continue }
+                out.append((id, kind(of: ns.substring(with: m.range).lowercased())))
             }
         }
         return out
     }
 
-    private static func webSearchIDs(_ title: String, _ service: StreamingService) async -> [String] {
+    /// Works out what kind of page a link is from its path.
+    static func kind(of link: String) -> FoundTitle.Kind {
+        if link.contains("/watch/") || link.contains("/episode") { return .episode }
+        if link.contains("/series/") || link.contains("/show/") || link.contains("/shows/")
+            || link.contains("tv-shows") || link.contains("/tv/") { return .series }
+        if link.contains("/movie") { return .movie }
+        return .unknown
+    }
+
+    private static func webSearchIDs(_ title: String, _ service: StreamingService) async -> [(id: String, kind: FoundTitle.Kind)] {
         var comps = URLComponents(string: "https://html.duckduckgo.com/html/")!
         comps.queryItems = [URLQueryItem(name: "q", value: "\(title) site:\(service.site)")]
         var req = URLRequest(url: comps.url!)
         req.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         req.timeoutInterval = 10
-        guard let (data, _) = try? await URLSession.shared.data(for: req) else { return [] }
+        guard let (data, _) = try? await URLSession.shared.data(for: req) else {
+            await ActivityLog.add("Web search failed for \(title) on \(service.name)")
+            return []
+        }
         var html = String(decoding: data, as: UTF8.self)
         html = html.removingPercentEncoding ?? html
-        return Array(ids(in: html, service).prefix(4))
+        let found = Array(ids(in: html, service).prefix(4))
+        await ActivityLog.add("Web search \(service.name) \"\(title)\": \(found.map { "\($0.id) (\($0.kind.rawValue))" }.joined(separator: ", ").ifEmpty("no results"))")
+        return found
     }
 
-    private static func geminiIDs(_ title: String, _ service: StreamingService) async -> [String] {
+    private static func geminiIDs(_ title: String, _ service: StreamingService) async -> [(id: String, kind: FoundTitle.Kind)] {
         let prompt = "Find the official \(service.name) web page URL (on \(service.site)) for the title \"\(title)\". Reply with only the URL."
         guard let text = try? await GeminiClient.current.groundedText(prompt) else { return [] }
-        return Array(ids(in: text, service).prefix(4))
+        let found = Array(ids(in: text, service).prefix(4))
+        await ActivityLog.add("Gemini lookup \(service.name) \"\(title)\": \(found.map(\.id).joined(separator: ", ").ifEmpty("nothing"))")
+        return found
     }
 
     private static func verify(_ id: String, _ query: String, _ service: StreamingService) async -> FoundTitle? {
@@ -141,30 +163,72 @@ enum TitleFinder {
     }
 }
 
+extension String {
+    func ifEmpty(_ fallback: String) -> String { isEmpty ? fallback : self }
+}
+
 extension RokuClient {
-    /// Deep-links a Roku app to a title, then checks it's really playing. If not, presses OK
-    /// (handles "Who's watching?" and details pages) and tries other link formats.
-    /// Remembers the format that worked for each app.
-    func playTitle(_ title: FoundTitle, appID: String, isSeries: Bool) async throws -> Bool {
+    /// Deep-links a Roku app to a title, then checks it's really playing. If not, gets past the
+    /// profile screen (using the profile list from Settings) or presses Play on a details page,
+    /// and tries other link formats. Remembers the format that worked for each app.
+    func playTitle(_ title: FoundTitle, appID: String, appName: String, profile: String?) async throws -> Bool {
         let learnedKey = "deeplink.\(appID)"
-        var mediaTypes = isSeries ? ["series", "episode", "season", "movie"] : ["movie", "episode", "series"]
-        if let learned = UserDefaults.standard.string(forKey: learnedKey) {
+        var mediaTypes: [String]
+        switch title.kind {
+        case .series: mediaTypes = ["series", "season", "episode"]
+        case .episode: mediaTypes = ["episode", "series"]
+        case .movie: mediaTypes = ["movie", "episode"]
+        case .unknown: mediaTypes = ["movie", "series", "episode"]
+        }
+        if let learned = UserDefaults.standard.string(forKey: learnedKey), title.kind == .unknown {
             mediaTypes.removeAll { $0 == learned }
             mediaTypes.insert(learned, at: 0)
         }
 
+        var profileDone = false
         for (i, mediaType) in mediaTypes.prefix(2).enumerated() {
+            await ActivityLog.add("Launch \(appName) contentId=\(title.id) mediaType=\(mediaType)")
             try await launch(appID, params: ["contentId": title.id, "mediaType": mediaType])
-            try? await Task.sleep(for: .seconds(i == 0 ? Settings.appLoadSeconds : 5))
-            if await isPlaying(appID) { UserDefaults.standard.set(mediaType, forKey: learnedKey); return true }
+            try? await Task.sleep(for: .seconds(i == 0 ? Settings.appLoadSeconds : 6))
+            if await isPlaying(appID) { remember(mediaType, learnedKey); return true }
 
-            if Settings.netflixAutoProfile {  // "Who's watching?" / details page "Play" button
+            // Profile screen ("Who's watching?") - pick the right person.
+            if !profileDone, try await pickProfile(appName: appName, name: profile) {
+                profileDone = true
+                try? await Task.sleep(for: .seconds(5))
+                if await isPlaying(appID) { remember(mediaType, learnedKey); return true }
+            }
+            // Details page - OK usually means Play / Start watching.
+            if Settings.autoPressPlay {
+                await ActivityLog.add("Not playing yet - pressing OK")
                 try await press("Select")
-                try? await Task.sleep(for: .seconds(4))
-                if await isPlaying(appID) { UserDefaults.standard.set(mediaType, forKey: learnedKey); return true }
+                try? await Task.sleep(for: .seconds(5))
+                if await isPlaying(appID) { remember(mediaType, learnedKey); return true }
             }
         }
+        await ActivityLog.add("\(appName) didn't report playback")
         return false
+    }
+
+    /// Moves to a profile on a "Who's watching?" row and selects it.
+    /// Uses the names saved in Settings › Profiles. Returns false if no profiles are set for this app.
+    @discardableResult
+    func pickProfile(appName: String, name: String?) async throws -> Bool {
+        let names = Settings.profiles(for: appName)
+        guard !names.isEmpty else { return false }
+        let wanted = (name?.isEmpty == false ? name! : Settings.defaultProfile(for: appName)).lowercased()
+        let index = names.firstIndex { $0.lowercased() == wanted }
+            ?? names.firstIndex { $0.lowercased().contains(wanted) || wanted.contains($0.lowercased()) }
+            ?? 0
+        await ActivityLog.add("Picking profile \(names[index]) (#\(index + 1)) in \(appName)")
+        try await press(Array(repeating: "Left", count: names.count), delay: 0.25)
+        if index > 0 { try await press(Array(repeating: "Right", count: index), delay: 0.35) }
+        try await press("Select")
+        return true
+    }
+
+    private func remember(_ mediaType: String, _ key: String) {
+        UserDefaults.standard.set(mediaType, forKey: key)
     }
 
     func isPlaying(_ appID: String) async -> Bool {

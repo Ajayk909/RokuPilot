@@ -60,6 +60,8 @@ struct AssistantEngine: Sendable {
     - For vague requests ("any horror movie on Prime", "a good anime on Crunchyroll"), first call suggest_titles,
       pick the first suggestion, then call play_title with it. Tell the user which title you picked.
     - If play_title fails, it already falls back to opening the app or Roku search; tell the user plainly.
+    - If the user names whose account/profile to use ("Aryan's account"), pass it as profile to play_title,
+      or call pick_profile when they only want to switch profile.
     - Apps take 3-6 seconds to load: call wait before pressing keys inside an app you just opened.
     - "Louder"/"quieter" = 3 VolumeUp/VolumeDown presses unless a number is given.
     - "Turn it off in N minutes" = set_sleep_timer. "What's on?" = status.
@@ -76,7 +78,9 @@ struct AssistantEngine: Sendable {
            ["app": ["type": "string"], "content_id": ["type": "string"], "media_type": ["type": "string"]], ["app"]),
         fn("play_title", "Open a streaming app directly on a movie/show/anime and start it. app = the streaming app name.",
            ["title": ["type": "string"], "app": ["type": "string"],
-            "is_series": ["type": "boolean", "description": "true for TV shows and anime series"]], ["title", "app"]),
+            "profile": ["type": "string", "description": "whose profile/account to use, if the user said"]], ["title", "app"]),
+        fn("pick_profile", "On a 'Who's watching?' screen, select a profile by name (uses the profile order saved in Settings).",
+           ["app": ["type": "string"], "name": ["type": "string"]], ["app", "name"]),
         fn("suggest_titles", "Get real, currently available titles matching a description (genre, mood) on a streaming app.",
            ["description": ["type": "string"], "app": ["type": "string"]], ["description", "app"]),
         fn("roku_search", "Open Roku's global search for a movie, show or actor.",
@@ -134,7 +138,11 @@ struct AssistantEngine: Sendable {
                     ok = false
                     result = ["ok": false, "error": .string(error.localizedDescription)]
                 }
-                steps.append(ToolStep(tool: name, summary: Self.describe(name, args), ok: ok))
+                if result["ok"] == .bool(false) { ok = false }
+                var summary = Self.describe(name, args)
+                if let detail = (result["error"] ?? result["note"])?.stringValue { summary += " — " + detail }
+                steps.append(ToolStep(tool: name, summary: summary, ok: ok))
+                await ActivityLog.add("\(name) \(JSON.object(args).compactText) → \(result.compactText)")
                 var fr: [String: JSON] = ["name": .string(name), "response": ["result": result]]
                 if let id = call["id"] { fr["id"] = id }
                 responses.append(["functionResponse": .object(fr)])
@@ -166,7 +174,13 @@ struct AssistantEngine: Sendable {
             return ["ok": true, "launched": .string(app.name)]
         case "play_title":
             return try await playTitle(s("title"), appName: s("app").isEmpty ? "Netflix" : s("app"),
-                                       isSeries: a["is_series"].map { $0 == .bool(true) } ?? false)
+                                       profile: s("profile").isEmpty ? nil : s("profile"))
+        case "pick_profile":
+            let app = try await roku.findApp(s("app"))
+            guard try await roku.pickProfile(appName: app.name, name: s("name")) else {
+                return ["ok": false, "error": .string("No profiles saved for \(app.name). Add them in Pilot › Settings › Profiles, in the order they appear on the TV.")]
+            }
+            return ["ok": true, "profile": .string(s("name"))]
         case "suggest_titles":
             let list = await TitleFinder.suggestions(s("description"), on: s("app").isEmpty ? "Netflix" : s("app"))
             return list.isEmpty ? ["ok": false, "error": "Couldn't find suggestions"]
@@ -209,7 +223,7 @@ struct AssistantEngine: Sendable {
         }
     }
 
-    private func playTitle(_ title: String, appName: String, isSeries: Bool) async throws -> JSON {
+    private func playTitle(_ title: String, appName: String, profile: String?) async throws -> JSON {
         let app = try await roku.findApp(appName)
         let service = StreamingService.matching(appName: app.name) ?? StreamingService.named(appName)
 
@@ -219,7 +233,7 @@ struct AssistantEngine: Sendable {
                 try await roku.launch(app.id)
                 return ["ok": false, "error": .string("Couldn't find \(title) on Netflix. Opened Netflix instead.")]
             }
-            try await roku.playNetflix(t)
+            try await roku.playNetflix(t, profile: profile)
             return ["ok": true, "playing": .string(t.name), "app": "Netflix"]
         }
 
@@ -233,7 +247,7 @@ struct AssistantEngine: Sendable {
             try await roku.launch(app.id)
             return ["ok": false, "error": .string("Couldn't find \(title) on \(service.name). Opened \(app.name) instead.")]
         }
-        let playing = try await roku.playTitle(found, appID: app.id, isSeries: isSeries)
+        let playing = try await roku.playTitle(found, appID: app.id, appName: app.name, profile: profile)
         return playing
             ? ["ok": true, "playing": .string(found.name), "app": .string(app.name)]
             : ["ok": true, "opened": .string(found.name), "app": .string(app.name),
@@ -248,6 +262,7 @@ struct AssistantEngine: Sendable {
         case "list_apps": return "Checked installed apps"
         case "launch_app": return "Opened \(s("app"))"
         case "play_title": return "\(s("app").isEmpty ? "Netflix" : s("app")): \(s("title"))"
+        case "pick_profile": return "Profile: \(s("name"))"
         case "suggest_titles": return "Found \(s("description")) on \(s("app"))"
         case "roku_search": return "Searched Roku for \(s("keyword"))"
         case "play_youtube": return "YouTube: \(s("query"))"

@@ -41,6 +41,39 @@ enum Settings {
         set { d.set(newValue, forKey: "nfProfile") }
     }
 
+    /// Press OK once if a title opens on its details page instead of playing.
+    static var autoPressPlay: Bool {
+        get { d.object(forKey: "autoPlay") as? Bool ?? true }
+        set { d.set(newValue, forKey: "autoPlay") }
+    }
+
+    /// Profile names per app, in the order they appear on the TV ("AJ, Aryan, Kids").
+    static func profilesText(for app: String) -> String {
+        d.string(forKey: "profiles.\(key(app))") ?? ""
+    }
+
+    static func setProfilesText(_ text: String, for app: String) {
+        d.set(text, forKey: "profiles.\(key(app))")
+    }
+
+    static func profiles(for app: String) -> [String] {
+        profilesText(for: app).split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
+    static func defaultProfile(for app: String) -> String {
+        let v = d.string(forKey: "defaultProfile.\(key(app))") ?? ""
+        return v.isEmpty ? (profiles(for: app).first ?? "") : v
+    }
+
+    static func setDefaultProfile(_ name: String, for app: String) {
+        d.set(name, forKey: "defaultProfile.\(key(app))")
+    }
+
+    /// Profiles grouped by service, so "Prime Video" and "Amazon Prime Video" share settings.
+    private static func key(_ app: String) -> String {
+        StreamingService.matching(appName: app)?.name ?? app
+    }
+
     static var haptics: Bool {
         get { d.object(forKey: "haptics") as? Bool ?? true }
         set { d.set(newValue, forKey: "haptics") }

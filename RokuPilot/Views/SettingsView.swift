@@ -10,6 +10,7 @@ struct SettingsView: View {
     @State private var nfLoad = Settings.netflixLoadSeconds
     @State private var appLoad = Settings.appLoadSeconds
     @State private var nfProfile = Settings.netflixAutoProfile
+    @State private var autoPlay = Settings.autoPressPlay
     @State private var testResult: (ok: Bool, text: String)?
     @State private var testing = false
 
@@ -109,14 +110,36 @@ struct SettingsView: View {
                         Slider(value: $appLoad, in: 4...20, step: 1)
                             .onChange(of: appLoad) { Settings.appLoadSeconds = appLoad }
                     }
-                    Toggle("Get past profile screens automatically", isOn: $nfProfile)
-                        .onChange(of: nfProfile) { Settings.netflixAutoProfile = nfProfile }
+                    Toggle("Press Play on title pages", isOn: $autoPlay)
+                        .onChange(of: autoPlay) { Settings.autoPressPlay = autoPlay }
                     Toggle("Haptic feedback", isOn: $haptics)
                         .onChange(of: haptics) { Settings.haptics = haptics }
                 } header: {
                     Text("Playback")
                 } footer: {
-                    Text("Load times are how long Pilot waits for an app to open. Raise them if videos start on a black screen. Profile screens: Pilot presses OK once if an app asks who's watching.")
+                    Text("Load times are how long Pilot waits for an app to open. Raise them if videos start on a black screen. Press Play: if a title opens on its details page, Pilot presses OK once to start it.")
+                }
+
+                Section {
+                    NavigationLink {
+                        ProfilesView()
+                    } label: {
+                        Label("Profiles", systemImage: "person.2.fill")
+                    }
+                } header: {
+                    Text("Accounts")
+                } footer: {
+                    Text("Tell Pilot who's on each app's \u{201C}Who's watching?\u{201D} screen, so you can say \u{201C}use Aryan's account\u{201D}.")
+                }
+
+                Section {
+                    NavigationLink {
+                        ActivityLogView()
+                    } label: {
+                        Label("Activity log", systemImage: "list.bullet.rectangle")
+                    }
+                } header: {
+                    Text("Troubleshooting")
                 }
 
                 Section {

@@ -203,7 +203,7 @@ struct MessageRow: View {
                             Label(step.summary, systemImage: step.ok ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                                 .font(.caption)
                                 .foregroundStyle(step.ok ? Theme.secondaryText : .orange)
-                                .lineLimit(1)
+                                .lineLimit(3)
                         }
                     }
                 }

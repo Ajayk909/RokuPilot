@@ -75,14 +75,13 @@ enum Netflix {
 }
 
 extension RokuClient {
-    /// Deep-links Netflix straight to a title and starts it. If Netflix stops on the
-    /// "Who's watching?" screen, presses OK once to pick the first profile.
-    func playNetflix(_ title: NetflixTitle) async throws {
+    /// Deep-links Netflix straight to a title and starts it, picking the right profile if Netflix asks.
+    func playNetflix(_ title: NetflixTitle, profile: String?) async throws {
+        await ActivityLog.add("Launch Netflix contentId=\(title.id)")
         try await launch(Netflix.appID, params: ["contentId": title.id, "mediaType": "movie"])
         try? await Task.sleep(for: .seconds(Settings.netflixLoadSeconds))
-        if let s = try? await status(), s.playerState == "play" || s.playerState == "buffer" { return }
-        if Settings.netflixAutoProfile {
-            try await press("Select")
-        }
+        if await isPlaying(Netflix.appID) { return }
+        if try await pickProfile(appName: "Netflix", name: profile) { return }
+        if Settings.autoPressPlay { try await press("Select") }
     }
 }
